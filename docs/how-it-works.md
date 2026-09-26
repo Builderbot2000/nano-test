@@ -28,7 +28,8 @@ adb *can* launch an app and read a debug app's private files. So the project is 
 ### 1. PC sends the request — [prompt.ps1](../prompt.ps1)
 
 1. Picks the device (`-Serial`, `$env:NANO_SERIAL`, or the first `ip:port` entry in `adb devices` — the
-   phone also appears under an mDNS alias, which is skipped).
+   phone also appears under an mDNS alias, which is skipped; with no `ip:port` entry, e.g. USB only, the
+   first device). USB and wireless behave identically from here on.
 2. Generates a random 12-char request **id**.
 3. Base64-encodes the prompt (UTF-8). This avoids quoting problems through PowerShell → adb → device shell
    and keeps non-ASCII text intact.
@@ -39,7 +40,9 @@ adb *can* launch an app and read a debug app's private files. So the project is 
        --es id <id> --es mode prompt --es prompt_b64 <base64> [--es temperature 0.2 ...]
    ```
 
-   All options travel as string intent extras.
+   All options travel as string intent extras. `-System` is sent base64-encoded as `system_b64`, and
+   `-Schema` as `schema`. `-JsonSchema` never reaches the app: the script appends the schema to the
+   prompt and strips a Markdown code fence from the reply.
 
 ### 2. App runs the request — [PromptActivity.kt](../app/src/main/java/com/example/nanotest/PromptActivity.kt)
 
@@ -50,6 +53,10 @@ adb *can* launch an app and read a debug app's private files. So the project is 
   downloads unless `mode=download`.
 - `generateContent(generateContentRequest(TextPart(prompt)) { temperature/topK/seed/maxOutputTokens })`
   sends the prompt through ML Kit → AICore → Nano.
+- With a `schema` extra the request becomes a typed request (`generateTypedContentRequest`) for the
+  matching `@Generable` class in [Schemas.kt](../app/src/main/java/com/example/nanotest/Schemas.kt).
+  The `genai-schema-compiler` KSP processor generates a schema provider for each class at build time;
+  AICore constrains decoding to that schema, and the app serializes the typed reply back to JSON (Gson).
 - Prompt requests are serialized with a `Mutex`; status and download requests are not, so a long download
   can't block a status check.
 
@@ -75,10 +82,11 @@ Result fields:
 | `text` | Model reply (prompt mode). |
 | `status` | `AVAILABLE` / `DOWNLOADABLE` / `DOWNLOADING` / `UNAVAILABLE` for the chosen variant. |
 | `stage`, `preference` | Which variant was used (`default` = ML Kit's defaults). |
+| `schema` | Compiled schema used, if any; `text` is then its JSON. |
 | `finish_reason` | ML Kit candidate finish reason (0 = normal stop). |
 | `latency_ms` | Time inside the app for the whole request, including `checkStatus()`. |
 | `error`, `error_code` | On failure; `error_code` is ML Kit's `GenAiException` code. |
-| `variants`, `base_model`, `token_limit`, `system_prompt`, `thinking`, `structured_output`, `caching` | Status mode only. |
+| `schemas`, `variants`, `base_model`, `token_limit`, `system_prompt`, `thinking`, `structured_output`, `caching` | Status mode only. |
 
 ### 4. PC reads the result
 
@@ -105,11 +113,18 @@ with `-Json` / `-Status` / `-Download`).
 ```
 nano-test/
 ├── prompt.ps1                     PC-side client
+├── package.json                   promptfoo (dev dependency) + npm scripts
+├── evals/
+│   ├── promptfooconfig.yaml       test suite
+│   ├── nano-provider.js           promptfoo provider → prompt.ps1 -Json
+│   └── schemas/                   ad-hoc JSON Schemas used by tests
 ├── app/
-│   ├── build.gradle.kts           minSdk 31, targetSdk 36, genai-prompt 1.0.0-beta4
+│   ├── build.gradle.kts           minSdk 31, targetSdk 36, genai-prompt 1.0.0-beta4, KSP schema compiler
 │   └── src/main/
 │       ├── AndroidManifest.xml
-│       └── java/com/example/nanotest/PromptActivity.kt
+│       └── java/com/example/nanotest/
+│           ├── PromptActivity.kt
+│           └── Schemas.kt         @Generable output classes
 ├── build.gradle.kts               AGP 9.4.1 (built-in Kotlin)
 ├── settings.gradle.kts
 ├── gradle/wrapper/                Gradle 9.8.0 (checksums pinned)
@@ -121,5 +136,6 @@ nano-test/
 - The phone must be awake, and the app must stay in front while a request runs.
 - Per-app inference quota (AICore returns `BUSY`); the Prompt API input limit is about 4K tokens for
   earlier Nano versions — query `-Status` for the device's `token_limit` (8192 on nano-v4).
-- Text-only for now. The API also supports image+text prompts, streaming, system instructions, structured
-  output, and context caching.
+- Text-only and single-turn for now. The API also supports image+text prompts, streaming, and context
+  caching.
+- Enforced structured output only works with schemas compiled into the app (see the README).

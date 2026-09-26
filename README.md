@@ -24,9 +24,14 @@ file that adb reads back. See [docs/how-it-works.md](docs/how-it-works.md).
 
 ## Setup
 
-### 1. Connect the phone (wireless debugging)
+### 1. Connect the phone
 
-On the phone: **Settings → System → Developer options → Wireless debugging → Pair device with pairing
+Either USB or wireless debugging works; nothing else in the setup changes.
+
+**USB:** enable **Developer options → USB debugging**, plug the phone in, and accept the "Allow USB
+debugging?" prompt on the phone. `adb devices` should show its serial as `device`.
+
+**Wireless:** on the phone, **Settings → System → Developer options → Wireless debugging → Pair device with pairing
 code**. Then on the PC:
 
 ```powershell
@@ -43,7 +48,7 @@ Pairing only has to be done once per PC.
 ```powershell
 $env:JAVA_HOME = "C:\Program Files\Android\Android Studio\jbr"
 .\gradlew.bat assembleDebug
-adb -s <ip>:<port> install -r app\build\outputs\apk\debug\app-debug.apk
+adb -s <serial> install -r app\build\outputs\apk\debug\app-debug.apk
 ```
 
 ### 3. Check the model is present
@@ -63,6 +68,9 @@ If the variant you want says `DOWNLOADABLE`, run `.\prompt.ps1 -Download` once (
 .\prompt.ps1 "17 * 23?" -Preference fast -Temperature 0      # fast variant, deterministic-ish
 .\prompt.ps1 -Status                                         # model availability + capabilities
 .\prompt.ps1 -Download                                       # ask AICore to fetch the model
+.\prompt.ps1 "Is the sky blue?" -System "Be terse."          # with a system instruction
+.\prompt.ps1 "The food was cold." -Schema sentiment          # structured output, enforced on device
+.\prompt.ps1 "Extract the contact: ..." -JsonSchema evals\schemas\contact.json  # ad-hoc schema
 ```
 
 | Option | Meaning |
@@ -71,7 +79,10 @@ If the variant you want says `DOWNLOADABLE`, run `.\prompt.ps1 -Download` once (
 | `-Preference full\|fast` | Full (higher quality) or fast (lower latency) variant. |
 | `-Temperature`, `-TopK`, `-Seed`, `-MaxTokens` | Generation parameters. |
 | `-Json` | Print the whole result JSON instead of just the text. |
-| `-Serial` | adb device (or set `$env:NANO_SERIAL`). Default: first `ip:port` device. |
+| `-System` | System instruction. |
+| `-Schema` | Structured output using a schema compiled into the app ([Schemas.kt](app/src/main/java/com/example/nanotest/Schemas.kt): `sentiment`, `recipe`). Decoding is constrained, so the reply is always valid JSON of that shape. |
+| `-JsonSchema` | Any JSON Schema (text or file path). It is appended to the prompt, not enforced — validate the reply (the test suite does). |
+| `-Serial` | adb device (or set `$env:NANO_SERIAL`). Default: first `ip:port` device, else the first device (e.g. USB). |
 | `-TimeoutSec` | Wait limit (default 120 s, 3600 s for `-Download`). |
 
 Example `-Json` result:
@@ -80,6 +91,52 @@ Example `-Json` result:
 { "id": "7ca4b42c12e6", "mode": "prompt", "status": "AVAILABLE", "stage": "default",
   "preference": "fast", "ok": true, "text": "391", "finish_reason": 0, "latency_ms": 186 }
 ```
+
+### Structured output: which one?
+
+| | `-Schema` | `-JsonSchema` |
+|---|---|---|
+| Guaranteed to match | Yes (constrained decoding in AICore) | No — the model is only asked |
+| A new shape needs | A `@Generable` data class in `Schemas.kt`, registered in `SCHEMAS`, then rebuild + reinstall | Nothing |
+
+ML Kit only supports compile-time schemas; it has no API for a JSON Schema supplied at runtime.
+
+## Test suites (promptfoo)
+
+[promptfoo](https://www.promptfoo.dev/) (open source) runs collections of test cases against the phone,
+checks the replies, and keeps a history of results. It is set up in [evals/](evals/):
+
+```powershell
+npm install        # once; needs Node.js 22.22+
+npm run eval       # run evals/promptfooconfig.yaml against the phone
+npm run view       # browse results, compare runs, see latency (web UI)
+npx promptfoo eval -c evals/promptfooconfig.yaml -o results.csv   # also export (.csv / .json / .html)
+```
+
+A test case sets vars and assertions:
+
+```yaml
+- description: Sentiment (compiled schema, enforced on device)
+  vars:
+    schema: sentiment            # provider setting: overrides the provider config for this test
+    input: I waited an hour and the food arrived cold.
+  assert:
+    - type: is-json
+    - type: javascript
+      value: JSON.parse(output).label === 'negative'
+```
+
+- **Provider settings** (`system`, `schema`, `jsonSchema`, `stage`, `preference`, `temperature`, `topK`,
+  `seed`, `maxTokens`, `serial`, `timeoutSec`) go in the provider `config`, or per test in `vars`.
+- **Prompts** can be plain templates (`'{{input}}'`) or chat format
+  (`[{"role": "system", ...}, {"role": "user", ...}]`). Nano takes a single user turn.
+- **Ad-hoc schemas**: put `jsonSchema: file://schemas/contact.json` in vars, and use the same file as the
+  `is-json` assertion's `value` to validate the reply.
+- **Results** are stored locally (`~/.promptfoo`) with pass/fail, the reply, and `latencyMs` (time on
+  the device). Metadata also records round-trip time, variant, schema and finish reason.
+- Tests run one at a time (`maxConcurrency: 1`), since the phone serves one foreground request at a time.
+
+The provider, [evals/nano-provider.js](evals/nano-provider.js), runs `prompt.ps1 -Json` for each test.
 
 ## Rules of thumb
 

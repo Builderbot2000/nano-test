@@ -40,6 +40,19 @@ Findings from setting this up (September 2026).
 
 The API surface was confirmed by inspecting the AAR with `javap`, not just the docs.
 
+### Structured output is compile-time only
+
+- `generateContent(GenerateTypedContentRequest<T>)` takes a `KClass<T>`, not a schema. The schema comes
+  from `@Generable` / `@Guide` annotations (`com.google.mlkit:genai-schema`), via a `GenerableProvider`
+  that the `genai-schema-compiler` KSP processor generates and registers in `META-INF/services`.
+- The library loads providers once with `ServiceLoader`; a class with no provider fails with "neither a
+  registered @Generable type nor a directly supported basic type". There is no public API for a JSON
+  Schema supplied at runtime, so ad-hoc schemas go in the prompt instead (not enforced).
+- Supported field types: `String`, `Int`, `Long`, `Float`, `Double`, `Boolean`, lists, and nested
+  `@Generable` classes; `@Guide` adds description, enum values, min/max, and min/max items.
+- The typed reply is parsed into `T` (shaded Gson); the raw JSON text is not exposed, so the app
+  re-serializes it.
+
 ## Test device findings (Pixel 11)
 
 | Item | Value |

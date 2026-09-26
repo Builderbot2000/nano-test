@@ -1,0 +1,67 @@
+# Test suite for on-device Gemini Nano. Run from the repo root: npm run eval  (then: npm run view)
+# Test vars named like provider settings (system, schema, jsonSchema, temperature, …) override the
+# provider config for that test; see nano-provider.js.
+description: Gemini Nano on-device checks
+
+providers:
+  - id: file://nano-provider.js
+    label: nano-fast
+    config:
+      preference: fast
+      temperature: 0
+
+prompts:
+  - '{{input}}'
+
+# The phone serves one foreground request at a time.
+evaluateOptions:
+  maxConcurrency: 1
+
+defaultTest:
+  assert:
+    - type: latency
+      threshold: 5000 # ms on the device
+
+tests:
+  - description: Arithmetic
+    vars:
+      input: What is 17 * 23? Reply with just the number.
+    assert:
+      - type: contains
+        value: '391'
+
+  - description: System instruction is followed
+    vars:
+      system: Always reply in French.
+      input: What colour is the sky on a clear day?
+    assert:
+      - type: icontains
+        value: bleu
+
+  - description: Sentiment (compiled schema, enforced on device)
+    vars:
+      schema: sentiment
+      input: I waited an hour and the food arrived cold.
+    assert:
+      - type: is-json
+      - type: javascript
+        value: JSON.parse(output).label === 'negative'
+
+  - description: Recipe (compiled schema, enforced on device)
+    vars:
+      schema: recipe
+      input: A simple pancake recipe.
+    assert:
+      - type: is-json
+      - type: javascript
+        value: JSON.parse(output).ingredients.length >= 3
+
+  - description: Contact extraction (ad-hoc JSON Schema, validated here)
+    vars:
+      jsonSchema: file://schemas/contact.json
+      input: 'Extract the contact: "Reach Dana Lee at dana.lee@example.com, no phone yet."'
+    assert:
+      - type: is-json
+        value: file://schemas/contact.json
+      - type: javascript
+        value: JSON.parse(output).email === 'dana.lee@example.com'

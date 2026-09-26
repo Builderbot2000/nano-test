@@ -1,0 +1,11 @@
+{
+  "name": "nano-test-evals",
+  "private": true,
+  "scripts": {
+    "eval": "promptfoo eval -c evals/promptfooconfig.yaml",
+    "view": "promptfoo view"
+  },
+  "devDependencies": {
+    "promptfoo": "^0.123.1"
+  }
+}

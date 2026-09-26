@@ -7,12 +7,17 @@
   .\prompt.ps1 -Download -Preference fast
   .\prompt.ps1 "Write a haiku about USB cables"
   .\prompt.ps1 "List 3 colors" -Temperature 0.2 -MaxTokens 64 -Json
+  .\prompt.ps1 "I loved it" -System "Be strict." -Schema sentiment
+  .\prompt.ps1 "Name a fruit" -JsonSchema '{"type":"object","properties":{"fruit":{"type":"string"}}}'
 #>
 param(
     [Parameter(Position = 0)] [string] $Prompt,
     [switch] $Status,
     [switch] $Download,
     [switch] $Json,
+    [string] $System,
+    [string] $Schema,       # structured output: a schema compiled into the app (Schemas.kt); enforced
+    [string] $JsonSchema,   # ad-hoc JSON Schema (text or file path): added to the prompt, not enforced
     [string] $Serial = $env:NANO_SERIAL,
     [ValidateSet('stable', 'preview')] [string] $Stage,
     [ValidateSet('full', 'fast')] [string] $Preference,
@@ -27,6 +32,7 @@ param(
 $pkg = 'com.example.nanotest'
 
 if (-not $Status -and -not $Download -and -not $Prompt) { throw 'Give a prompt, or use -Status / -Download.' }
+if ($Schema -and $JsonSchema) { throw 'Use -Schema or -JsonSchema, not both.' }
 if ($TimeoutSec -le 0) { $TimeoutSec = if ($Download) { 3600 } else { 120 } }
 
 if (-not $Serial) {
@@ -38,6 +44,8 @@ if (-not $Serial) {
 }
 function Invoke-Adb { adb -s $Serial @args }
 
+function ConvertTo-Base64([string] $text) { [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($text)) }
+
 $id = [guid]::NewGuid().ToString('N').Substring(0, 12)
 $extras = @('--es', 'id', $id)
 if ($Status) {
@@ -45,8 +53,13 @@ if ($Status) {
 } elseif ($Download) {
     $extras += @('--es', 'mode', 'download')
 } else {
-    $b64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($Prompt))
-    $extras += @('--es', 'mode', 'prompt', '--es', 'prompt_b64', $b64)
+    if ($JsonSchema) {
+        if (Test-Path -LiteralPath $JsonSchema -PathType Leaf) { $JsonSchema = Get-Content -LiteralPath $JsonSchema -Raw -Encoding UTF8 }
+        $Prompt += "`n`nRespond with only a JSON value that conforms to this JSON Schema, and no other text:`n$JsonSchema"
+    }
+    $extras += @('--es', 'mode', 'prompt', '--es', 'prompt_b64', (ConvertTo-Base64 $Prompt))
+    if ($System) { $extras += @('--es', 'system_b64', (ConvertTo-Base64 $System)) }
+    if ($Schema) { $extras += @('--es', 'schema', $Schema) }
 }
 if ($Stage)                 { $extras += @('--es', 'stage', $Stage) }
 if ($Preference)            { $extras += @('--es', 'preference', $Preference) }
@@ -83,6 +96,10 @@ Invoke-Adb shell run-as $pkg rm -f $file "files/results/$id.progress" | Out-Null
 
 $raw = $raw -join "`n"
 $result = $raw | ConvertFrom-Json
+if ($JsonSchema -and $result.ok) {
+    # The model often wraps JSON in a Markdown code fence; keep just the JSON.
+    $result.text = $result.text -replace '^\s*```(?:json)?\s*([\s\S]*?)\s*```\s*$', '$1'
+}
 if ($Json -or $Status -or $Download) {
     $result | ConvertTo-Json -Depth 5
 } elseif ($result.ok) {

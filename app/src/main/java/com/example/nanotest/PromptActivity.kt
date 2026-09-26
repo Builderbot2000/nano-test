@@ -16,22 +16,28 @@ import com.google.mlkit.genai.prompt.Generation
 import com.google.mlkit.genai.prompt.GenerativeModel
 import com.google.mlkit.genai.prompt.ModelPreference
 import com.google.mlkit.genai.prompt.ModelReleaseStage
+import com.google.mlkit.genai.prompt.SystemInstruction
 import com.google.mlkit.genai.prompt.TextPart
 import com.google.mlkit.genai.prompt.generateContentRequest
+import com.google.mlkit.genai.prompt.generateTypedContentRequest
 import com.google.mlkit.genai.prompt.generationConfig
 import com.google.mlkit.genai.prompt.modelConfig
+import com.google.gson.Gson
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import kotlin.reflect.KClass
 
 private const val TAG = "NanoTest"
 
 private val STAGES = mapOf("stable" to ModelReleaseStage.STABLE, "preview" to ModelReleaseStage.PREVIEW)
+private val GSON = Gson()
 private val PREFERENCES = mapOf("full" to ModelPreference.FULL, "fast" to ModelPreference.FAST)
 
 /** Process-wide state, so model clients survive between requests. */
@@ -59,6 +65,7 @@ private object Nano {
  * Runs one request per launch and writes the result to files/results/<id>.json.
  *
  * Extras (all strings): id, mode ("prompt" | "status" | "download"), prompt_b64 (UTF-8, base64),
+ * system_b64 (system instruction, UTF-8, base64), schema (a name from SCHEMAS: structured output),
  * stage ("stable" | "preview"), preference ("full" | "fast"),
  * temperature, top_k, seed, max_tokens.
  *
@@ -118,6 +125,7 @@ class PromptActivity : Activity() {
                 .put("preference", preference ?: "default")
 
             if (mode == "status") {
+                out.put("schemas", JSONArray(SCHEMAS.keys))
                 // Report every variant, so it's clear which (if any) is already on the device.
                 val variants = JSONObject()
                 for (s in STAGES.keys) for (p in PREFERENCES.keys) {
@@ -142,21 +150,36 @@ class PromptActivity : Activity() {
                     .put("error", "Model not present on device (status=${statusName(status)}); run with -Download first.")
             }
 
-            val prompt = intent.getStringExtra("prompt_b64")
-                ?.let { String(Base64.decode(it, Base64.DEFAULT), Charsets.UTF_8) }
+            val prompt = intent.base64Extra("prompt_b64")
                 ?: return out.put("ok", false).put("error", "missing prompt_b64 extra")
+            val system = intent.base64Extra("system_b64")
+            val schemaName = intent.getStringExtra("schema")?.lowercase()
+            val schema = schemaName?.let {
+                SCHEMAS[it] ?: return out.put("ok", false).put("error", "schema must be one of ${SCHEMAS.keys}")
+            }
 
             val request = generateContentRequest(TextPart(prompt)) {
+                system?.let { systemInstruction = SystemInstruction(it) }
                 intent.getStringExtra("temperature")?.toFloatOrNull()?.let { temperature = it }
                 intent.getStringExtra("top_k")?.toIntOrNull()?.let { topK = it }
                 intent.getStringExtra("seed")?.toIntOrNull()?.let { seed = it }
                 intent.getStringExtra("max_tokens")?.toIntOrNull()?.let { maxOutputTokens = it }
             }
-            val response = model.generateContent(request)
-            val candidate = response.candidates.firstOrNull()
-            out.put("ok", true)
-                .put("text", candidate?.text ?: "")
-                .put("finish_reason", candidate?.finishReason)
+            if (schema != null) {
+                // Decoding is constrained to the schema; the typed reply is re-serialized as JSON text.
+                @Suppress("UNCHECKED_CAST")
+                val typed = generateTypedContentRequest(request, schema as KClass<Any>)
+                val candidate = model.generateContent(typed).candidates.firstOrNull()
+                out.put("ok", true)
+                    .put("schema", schemaName)
+                    .put("text", candidate?.response?.let { GSON.toJson(it) } ?: "")
+                    .put("finish_reason", candidate?.finishReason)
+            } else {
+                val candidate = model.generateContent(request).candidates.firstOrNull()
+                out.put("ok", true)
+                    .put("text", candidate?.text ?: "")
+                    .put("finish_reason", candidate?.finishReason)
+            }
         } catch (e: GenAiException) {
             Log.w(TAG, "GenAiException", e)
             out.put("ok", false).put("error", e.message).put("error_code", e.errorCode)
@@ -196,6 +219,9 @@ class PromptActivity : Activity() {
             window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         }
     }
+
+    private fun Intent.base64Extra(name: String): String? =
+        getStringExtra(name)?.let { String(Base64.decode(it, Base64.DEFAULT), Charsets.UTF_8) }
 
     private fun writeResult(id: String, result: JSONObject) = writeFile(id, "json", result)
 
