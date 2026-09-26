@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <application
+        android:label="Nano Test"
+        android:theme="@android:style/Theme.DeviceDefault">
+
+        <!-- AICore only serves the top foreground app, so requests arrive as activity launches.
+             showWhenLocked/turnScreenOn let a request run without unlocking first. -->
+        <activity
+            android:name=".PromptActivity"
+            android:exported="true"
+            android:launchMode="singleTop"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>
