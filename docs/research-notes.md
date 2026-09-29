@@ -89,7 +89,8 @@ immediately (the on-device safety model, ~30 MB, arrived at once here) and defer
 phone on Wi-Fi and charging, then re-check with `-Status`. To inspect pending jobs:
 
 ```powershell
-adb shell dumpsys jobscheduler | Select-String aicore -Context 0,12
+adb shell dumpsys jobscheduler | Select-String aicore -Context 0,12   # PowerShell
+adb shell dumpsys jobscheduler | grep -A 12 aicore                    # bash/zsh
 ```
 
 ### "No result after N s"
@@ -109,7 +110,13 @@ app. Use it with `-Stage preview`.
 
 ### Garbled non-English output
 `prompt.ps1` sets the console to UTF-8. If you call adb yourself in Windows PowerShell 5.1, set
-`[Console]::OutputEncoding = [Text.Encoding]::UTF8` first.
+`[Console]::OutputEncoding = [Text.Encoding]::UTF8` first. Linux/macOS terminals are UTF-8 already.
+
+### Running from WSL
+WSL can't see USB devices by default. Either use wireless debugging (`adb connect` works from inside WSL
+on the same network), or share the phone with [usbipd-win](https://github.com/dorssel/usbipd-win). Make
+sure only one adb server owns the phone: if Windows' `adb` is running, stop it with `adb kill-server`
+(on Windows).
 
 ## Sources
 

@@ -27,7 +27,9 @@ adb *can* launch an app and read a debug app's private files. So the project is 
 
 ### 1. PC sends the request — [prompt.ps1](../prompt.ps1)
 
-1. Picks the device (`-Serial`, `$env:NANO_SERIAL`, or the first `ip:port` entry in `adb devices` — the
+1. Finds `adb`: on PATH first, then in the platform-tools of `ANDROID_HOME` / `ANDROID_SDK_ROOT`, then
+   in Android Studio's default SDK location (`%LOCALAPPDATA%\Android\Sdk`, `~/Library/Android/sdk`,
+   `~/Android/Sdk`). Picks the device (`-Serial`, `$env:NANO_SERIAL`, or the first `ip:port` entry in `adb devices` — the
    phone also appears under an mDNS alias, which is skipped; with no `ip:port` entry, e.g. USB only, the
    first device). USB and wireless behave identically from here on.
 2. Generates a random 12-char request **id**.
@@ -112,7 +114,7 @@ with `-Json` / `-Status` / `-Download`).
 
 ```
 nano-test/
-├── prompt.ps1                     PC-side client
+├── prompt.ps1                     PC-side client (Windows PowerShell 5.1, or pwsh 7 on any OS)
 ├── package.json                   promptfoo (dev dependency) + npm scripts
 ├── evals/
 │   ├── promptfooconfig.yaml       test suite

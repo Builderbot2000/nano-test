@@ -1,0 +1,7 @@
+* text=auto
+# Run on Linux/macOS: a CRLF shebang line breaks them.
+gradlew text eol=lf
+*.ps1 text eol=lf
+# cmd.exe needs CRLF.
+*.bat text eol=crlf
+*.jar binary
