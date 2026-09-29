@@ -1,5 +1,6 @@
 // promptfoo provider for on-device Gemini Nano. Each call runs prompt.ps1 -Json, which drives the phone
-// over adb (see docs/how-it-works.md).
+// over adb (see docs/how-it-works.md). PowerShell: powershell.exe on Windows, pwsh (PowerShell 7+) on
+// Linux/macOS; set NANO_POWERSHELL to use another executable (e.g. pwsh on Windows).
 //
 // Settings come from the provider `config`, overridden per test by vars of the same name:
 //   system, schema (compiled into the app, enforced), jsonSchema (ad-hoc, prompt only),
@@ -11,6 +12,7 @@ const { spawn } = require('node:child_process');
 const path = require('node:path');
 
 const SCRIPT = path.join(__dirname, '..', 'prompt.ps1');
+const POWERSHELL = process.env.NANO_POWERSHELL || (process.platform === 'win32' ? 'powershell.exe' : 'pwsh');
 
 // setting → [prompt.ps1 parameter, type]; switches are not needed here.
 const PARAMS = {
@@ -62,7 +64,7 @@ function runScript(settings) {
 
   return new Promise((resolve, reject) => {
     const child = spawn(
-      'powershell.exe',
+      POWERSHELL,
       ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', command],
       { env, windowsHide: true },
     );
@@ -70,7 +72,13 @@ function runScript(settings) {
     let stderr = '';
     child.stdout.on('data', (d) => (stdout += d));
     child.stderr.on('data', (d) => (stderr += d));
-    child.on('error', reject);
+    child.on('error', (e) =>
+      reject(
+        e.code === 'ENOENT'
+          ? new Error(`${POWERSHELL} not found. Install PowerShell 7 (pwsh), or set NANO_POWERSHELL.`)
+          : e,
+      ),
+    );
     child.on('close', (code) => {
       try {
         resolve(JSON.parse(stdout));

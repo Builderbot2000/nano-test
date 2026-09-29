@@ -1,3 +1,4 @@
+#!/usr/bin/env pwsh
 <#
 .SYNOPSIS
   Send a prompt to the on-device Gemini Nano (via the Nano Test app) and print the reply.
@@ -9,6 +10,10 @@
   .\prompt.ps1 "List 3 colors" -Temperature 0.2 -MaxTokens 64 -Json
   .\prompt.ps1 "I loved it" -System "Be strict." -Schema sentiment
   .\prompt.ps1 "Name a fruit" -JsonSchema '{"type":"object","properties":{"fruit":{"type":"string"}}}'
+
+.NOTES
+  Runs on Windows PowerShell 5.1 and on PowerShell 7+ (pwsh) on Windows, Linux and macOS.
+  On Linux/macOS, call it as ./prompt.ps1 (or: pwsh ./prompt.ps1).
 #>
 param(
     [Parameter(Position = 0)] [string] $Prompt,
@@ -35,14 +40,26 @@ if (-not $Status -and -not $Download -and -not $Prompt) { throw 'Give a prompt, 
 if ($Schema -and $JsonSchema) { throw 'Use -Schema or -JsonSchema, not both.' }
 if ($TimeoutSec -le 0) { $TimeoutSec = if ($Download) { 3600 } else { 120 } }
 
+# adb: from PATH, else the platform-tools of the Android SDK (ANDROID_HOME, or Android Studio's default location).
+$adb = (Get-Command adb -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1).Path
+if (-not $adb) {
+    $sdks = @($env:ANDROID_HOME, $env:ANDROID_SDK_ROOT)
+    if ($env:LOCALAPPDATA) { $sdks += Join-Path $env:LOCALAPPDATA 'Android/Sdk' }       # Windows
+    if ($HOME) { $sdks += (Join-Path $HOME 'Library/Android/sdk'), (Join-Path $HOME 'Android/Sdk') }  # macOS, Linux
+    $adb = $sdks | Where-Object { $_ } | ForEach-Object { Join-Path $_ 'platform-tools' } |
+        ForEach-Object { Join-Path $_ 'adb.exe'; Join-Path $_ 'adb' } |
+        Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
+    if (-not $adb) { throw 'adb not found. Put Android SDK platform-tools on PATH, or set ANDROID_HOME.' }
+}
+
 if (-not $Serial) {
     # Prefer an ip:port entry; the mDNS alias for the same phone also shows up in the list.
-    $devices = adb devices | Select-String '^(\S+)\s+device$' | ForEach-Object { $_.Matches[0].Groups[1].Value }
+    $devices = & $adb devices | Select-String '^(\S+)\s+device$' | ForEach-Object { $_.Matches[0].Groups[1].Value }
     $Serial = ($devices | Where-Object { $_ -match '^\d+\.\d+\.\d+\.\d+:\d+$' } | Select-Object -First 1)
     if (-not $Serial) { $Serial = $devices | Select-Object -First 1 }
     if (-not $Serial) { throw 'No adb device connected.' }
 }
-function Invoke-Adb { adb -s $Serial @args }
+function Invoke-Adb { & $adb -s $Serial @args }
 
 function ConvertTo-Base64([string] $text) { [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($text)) }
 
